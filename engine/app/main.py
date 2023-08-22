@@ -162,7 +162,8 @@ async def db_upgrade():
     if globals.COSMOS_KEY:
         cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
     else:
-        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+        az_credential = DefaultAzureCredential()
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
 
     database_name = "ipam-db"
     database = cosmos_client.get_database_client(database_name)
@@ -356,13 +357,15 @@ async def db_upgrade():
     #     logger.info("No existing Virtual Hubs to patch...")
 
     await cosmos_client.close()
+    await az_credential.close()
 
 @app.on_event("startup")
 async def set_globals():
     if globals.COSMOS_KEY:
         client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
     else:
-        client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+        az_credential = DefaultAzureCredential()
+        client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
 
     database_name = globals.DATABASE_NAME
 
@@ -390,6 +393,7 @@ async def set_globals():
         # container = database.get_container_client(container_name)
 
     await client.close()
+    await az_credential.close()
 
     await db_upgrade()
 
