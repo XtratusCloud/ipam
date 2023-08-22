@@ -12,6 +12,7 @@ from azure.mgmt.managementgroups.aio import ManagementGroupsAPI
 
 from azure.cosmos.aio import CosmosClient
 import azure.cosmos.exceptions as exceptions
+from azure.identity.aio import DefaultAzureCredential
 
 import os
 import jwt
@@ -139,8 +140,12 @@ async def get_mgmt_group_name(tenant_id):
 async def cosmos_query(query: str, tenant_id: str):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
-
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        az_credential = DefaultAzureCredential()
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
+        
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
 
@@ -156,13 +161,18 @@ async def cosmos_query(query: str, tenant_id: str):
     result_array = [result async for result in query_results]
 
     await cosmos_client.close()
+    await az_credential.close()
 
     return result_array
 
 async def cosmos_upsert(data):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        az_credential = DefaultAzureCredential()
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -176,15 +186,21 @@ async def cosmos_upsert(data):
         raise
     finally:
         await cosmos_client.close()
+        await az_credential.close()
 
     await cosmos_client.close()
+    await az_credential.close()
 
     return res
 
 async def cosmos_replace(old, new):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        az_credential = DefaultAzureCredential()
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -203,15 +219,21 @@ async def cosmos_replace(old, new):
         raise
     finally:
         await cosmos_client.close()
+        await az_credential.close()
 
     await cosmos_client.close()
+    await az_credential.close()
 
     return
 
 async def cosmos_delete(item, tenant_id: str):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        az_credential = DefaultAzureCredential()
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=az_credential)
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -228,8 +250,10 @@ async def cosmos_delete(item, tenant_id: str):
         raise
     finally:
         await cosmos_client.close()
+        await az_credential.close()
 
     await cosmos_client.close()
+    await az_credential.close()
 
     return
 
