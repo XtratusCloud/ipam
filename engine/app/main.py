@@ -159,10 +159,7 @@ if os.path.isdir(BUILD_DIR):
         return FileResponse(BUILD_DIR + "/index.html")
 
 async def db_upgrade():
-    if globals.COSMOS_KEY:
-        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
-    else:
-        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = "ipam-db"
     database = cosmos_client.get_database_client(database_name)
@@ -359,10 +356,7 @@ async def db_upgrade():
 
 @app.on_event("startup")
 async def set_globals():
-    if globals.COSMOS_KEY:
-        client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
-    else:
-        client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
 
     database_name = globals.DATABASE_NAME
 
