@@ -10,6 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos import PartitionKey
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
+from azure.identity import DefaultAzureCredential
 
 from app.routers import (
     azure,
@@ -158,7 +159,10 @@ if os.path.isdir(BUILD_DIR):
         return FileResponse(BUILD_DIR + "/index.html")
 
 async def db_upgrade():
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = "ipam-db"
     database = cosmos_client.get_database_client(database_name)
@@ -355,7 +359,10 @@ async def db_upgrade():
 
 @app.on_event("startup")
 async def set_globals():
-    client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else:
+        client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = globals.DATABASE_NAME
 
