@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos import PartitionKey
-from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
+from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError, CosmosHttpResponseError
 from azure.identity.aio import DefaultAzureCredential
 
 from app.routers import (
@@ -159,7 +159,10 @@ if os.path.isdir(BUILD_DIR):
         return FileResponse(BUILD_DIR + "/index.html")
 
 async def db_upgrade():
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = "ipam-db"
     database = cosmos_client.get_database_client(database_name)
@@ -356,30 +359,35 @@ async def db_upgrade():
 
 @app.on_event("startup")
 async def set_globals():
-    client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    if globals.COSMOS_KEY:
+        client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else:
+        client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = globals.DATABASE_NAME
 
     try:
         logger.info('Creating Database...')
-        database = await client.create_database(
+        database = await client.create_database_if_not_exists(
             id = database_name
         )
-    except CosmosResourceExistsError:
-        logger.warning('Database exists! Using existing database...')
-        database = client.get_database_client(database_name)
+    except CosmosHttpResponseError:
+        logger.warning('Request to the Azure Cosmos database for database creation service failed.')
+        # logger.warning('Database exists! Using existing database...')
+        # database = client.get_database_client(database_name)
 
     container_name = globals.CONTAINER_NAME
 
     try:
         logger.info('Creating Container...')
-        container = await database.create_container(
+        container = await database.create_container_if_not_exists(
             id = container_name,
             partition_key = PartitionKey(path = "/tenant_id")
         )
-    except CosmosResourceExistsError:
-        logger.warning('Container exists! Using existing container...')
-        container = database.get_container_client(container_name)
+    except CosmosHttpResponseError:
+        logger.warning('Request to the Azure Cosmos database service for container creation failed.')
+        # logger.warning('Container exists! Using existing container...')
+        # container = database.get_container_client(container_name)
 
     await client.close()
 

@@ -140,7 +140,10 @@ async def get_mgmt_group_name(tenant_id):
 async def cosmos_query(query: str, tenant_id: str):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
         
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -163,7 +166,10 @@ async def cosmos_query(query: str, tenant_id: str):
 async def cosmos_upsert(data):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -185,7 +191,10 @@ async def cosmos_upsert(data):
 async def cosmos_replace(old, new):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
@@ -212,7 +221,10 @@ async def cosmos_replace(old, new):
 async def cosmos_delete(item, tenant_id: str):
     """DOCSTRING"""
 
-    cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
+    if globals.COSMOS_KEY:
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=globals.COSMOS_KEY)
+    else: 
+        cosmos_client = CosmosClient(globals.COSMOS_URL, credential=DefaultAzureCredential())
 
     database_name = globals.DATABASE_NAME
     database = cosmos_client.get_database_client(database_name)
