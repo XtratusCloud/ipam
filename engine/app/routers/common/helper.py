@@ -12,7 +12,7 @@ from azure.mgmt.managementgroups.aio import ManagementGroupsAPI
 
 from azure.cosmos.aio import CosmosClient
 import azure.cosmos.exceptions as exceptions
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential
 
 import os
 import jwt
