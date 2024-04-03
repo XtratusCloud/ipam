@@ -1,30 +1,34 @@
-from fastapi import APIRouter, Depends, Request, Response, HTTPException, Header, Query, Path, status
-from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import PlainTextResponse
 from fastapi.encoders import jsonable_encoder
 
-from typing import Optional, List, Union, Any
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    status,
+    Depends,
+    Header,
+    Query,
+    Path
+)
 
-import azure.cosmos.exceptions as exceptions
+from typing import Optional, List, Union
 
 import re
 import jwt
 import time
 import uuid
 import copy
-import asyncio
 import shortuuid
 import jsonpatch
 from netaddr import IPSet, IPNetwork
 
 from app.dependencies import (
-    check_token_expired,
+    api_auth_checks,
     get_admin,
     get_tenant_id
 )
 
 from app.models import *
-from . import argquery
 
 from app.routers.common.helper import (
     get_username_from_jwt,
@@ -32,14 +36,10 @@ from app.routers.common.helper import (
     cosmos_upsert,
     cosmos_replace,
     cosmos_delete,
-    cosmos_retry,
-    arg_query,
-    vnet_fixup
+    cosmos_retry
 )
 
 from app.routers.azure import (
-    get_vnet,
-    get_vhub,
     get_network
 )
 
@@ -54,17 +54,28 @@ EXTERNAL_DESC_REGEX = "^(?![ /\._-])([a-zA-Z0-9 /\._-]){1,64}(?<![ /\._-])$"
 router = APIRouter(
     prefix="/spaces",
     tags=["spaces"],
-    dependencies=[Depends(check_token_expired)]
+    dependencies=[Depends(api_auth_checks)]
 )
 
-async def scrub_space_patch(patch):
+async def valid_space_name_update(name, space_name, tenant_id):
+    space_names = await cosmos_query("SELECT VALUE LOWER(c.name) FROM c WHERE c.type = 'space' AND LOWER(c.name) != LOWER('{}')".format(space_name), tenant_id)
+
+    if name.lower() in space_names:
+        raise HTTPException(status_code=400, detail="Updated Space name must be unique.")
+    
+    if re.match(SPACE_NAME_REGEX, name):
+        return True
+
+    return False
+
+async def scrub_space_patch(patch, space_name, tenant_id):
     scrubbed_patch = []
 
     allowed_ops = [
         {
             "op": "replace",
             "path": "/name",
-            "valid": SPACE_NAME_REGEX,
+            "valid": valid_space_name_update,
             "error": "Space name can be a maximum of 64 characters and may contain alphanumerics, underscores, hypens, and periods."
         },
         {
@@ -79,18 +90,39 @@ async def scrub_space_patch(patch):
         target = next((x for x in allowed_ops if (x['op'] == item['op'] and x['path'] == item['path'])), None)
 
         if target:
-            if re.match(target['valid'], str(item['value'])):
-                scrubbed_patch.append(item)
+            if isinstance(target['valid'], str):
+                if re.match(target['valid'], str(item['value']), re.IGNORECASE):
+                    scrubbed_patch.append(item)
+                else:
+                    raise HTTPException(status_code=400, detail=target['error'])
+            elif callable(target['valid']):
+                if await target['valid'](item['value'], space_name, tenant_id):
+                    scrubbed_patch.append(item)
+                else:
+                    raise HTTPException(status_code=400, detail=target['error'])
             else:
                 raise HTTPException(status_code=400, detail=target['error'])
 
     return scrubbed_patch
 
-async def valid_block_cidr_update(cidr, space, block_name):
+async def valid_block_name_update(name, space_name, block_name, tenant_id):
+    blocks = await cosmos_query("SELECT VALUE LOWER(t.name) FROM c join t IN c.blocks WHERE c.type = 'space' AND LOWER(c.name) != LOWER('{}')".format(space_name), tenant_id)
+    other_blocks = [x for x in blocks if x != block_name.lower()]
+
+    if name.lower() in other_blocks:
+        raise HTTPException(status_code=400, detail="Updated Block name cannot match existing Blocks within the Space.")
+    
+    if re.match(BLOCK_NAME_REGEX, name):
+        return True
+
+    return False
+
+async def valid_block_cidr_update(cidr, space_name, block_name, tenant_id):
     space_cidrs = []
     block_cidrs = []
 
-    target_block = next((x for x in space['blocks'] if x['name'].lower() == block_name.lower()), None)
+    blocks = await cosmos_query("SELECT VALUE t FROM c join t IN c.blocks WHERE c.type = 'space' AND LOWER(c.name) = LOWER('{}')".format(space_name), tenant_id)
+    target_block = next((x for x in blocks if x['name'].lower() == block_name.lower()), None)
 
     if target_block:
         if(cidr == target_block['cidr']):
@@ -99,11 +131,11 @@ async def valid_block_cidr_update(cidr, space, block_name):
         block_network = IPNetwork(cidr)
 
         if(str(block_network.cidr) != cidr):
-            raise HTTPException(status_code=400, detail="Invalid CIDR value, Try '{}' instead.".format(block_network.cidr))
+            raise HTTPException(status_code=400, detail="Invalid CIDR value, try '{}' instead.".format(block_network.cidr))
 
     net_list = await get_network(None, True)
 
-    for block in space['blocks']:
+    for block in blocks:
         if block['name'] != block_name:
             space_cidrs.append(block['cidr'])
         else:
@@ -121,21 +153,21 @@ async def valid_block_cidr_update(cidr, space, block_name):
     block_set = IPSet(block_cidrs)
 
     if space_set & update_set:
-        return False
+        raise HTTPException(status_code=400, detail="Updated CIDR cannot overlap other Block CIDRs within the Space.")
     
     if not block_set.issubset(update_set):
         return False
     
     return True
 
-async def scrub_block_patch(patch, space, block_name):
+async def scrub_block_patch(patch, space_name, block_name, tenant_id):
     scrubbed_patch = []
 
     allowed_ops = [
         {
             "op": "replace",
             "path": "/name",
-            "valid": BLOCK_NAME_REGEX,
+            "valid": valid_block_name_update,
             "error": "Block name can be a maximum of 64 characters and may contain alphanumerics, underscores, hypens, slashes, and periods."
         },
         {
@@ -156,7 +188,7 @@ async def scrub_block_patch(patch, space, block_name):
                 else:
                     raise HTTPException(status_code=400, detail=target['error'])
             elif callable(target['valid']):
-                if await target['valid'](item['value'], space, block_name):
+                if await target['valid'](item['value'], space_name, block_name, tenant_id):
                     scrubbed_patch.append(item)
                 else:
                     raise HTTPException(status_code=400, detail=target['error'])
@@ -241,6 +273,10 @@ async def get_spaces(
                                 net['used'] += IPNetwork(subnet['prefix']).size
                                 subnet['size'] = IPNetwork(subnet['prefix']).size
 
+                for ext in block['externals']:
+                    space['used'] += IPNetwork(ext['cidr']).size
+                    block['used'] += IPNetwork(ext['cidr']).size
+
             if not is_admin:
                 user_name = get_username_from_jwt(user_assertion)
                 block['resv'] = list(filter(lambda x: x['createdBy'] == user_name, block['resv']))
@@ -296,7 +332,7 @@ async def create_space(
         "id": uuid.uuid4(),
         "type": "space",
         "tenant_id": tenant_id,
-        **space.dict(),
+        **space.model_dump(),
         "blocks": []
     }
 
@@ -385,6 +421,10 @@ async def get_space(
                             net['used'] += IPNetwork(subnet['prefix']).size
                             subnet['size'] = IPNetwork(subnet['prefix']).size
 
+            for ext in block['externals']:
+                space['used'] += IPNetwork(ext['cidr']).size
+                block['used'] += IPNetwork(ext['cidr']).size
+
         if not is_admin:
             user_name = get_username_from_jwt(user_assertion)
             block['resv'] = list(filter(lambda x: x['createdBy'] == user_name, block['resv']))
@@ -400,7 +440,7 @@ async def get_space(
 @router.patch(
     "/{space}",
     summary = "Update Space Details",
-    response_model = Space,
+    # response_model = Space,
     status_code = 200
 )
 @cosmos_retry(
@@ -438,11 +478,11 @@ async def update_space(
         raise HTTPException(status_code=400, detail="Invalid space name.")
 
     try:
-        patch = jsonpatch.JsonPatch(updates)
+        patch = jsonpatch.JsonPatch([x.model_dump() for x in updates])
     except jsonpatch.InvalidJsonPatch:
         raise HTTPException(status_code=500, detail="Invalid JSON patch, please review and try again.")
 
-    scrubbed_patch = jsonpatch.JsonPatch(await scrub_space_patch(patch))
+    scrubbed_patch = jsonpatch.JsonPatch(await scrub_space_patch(patch, space, tenant_id))
     update_space = scrubbed_patch.apply(target_space)
 
     await cosmos_replace(target_space, update_space)
@@ -679,6 +719,9 @@ async def get_blocks(
                             net['used'] += IPNetwork(subnet['prefix']).size
                             subnet['size'] = IPNetwork(subnet['prefix']).size
 
+            for ext in block['externals']:
+                block['used'] += IPNetwork(ext['cidr']).size
+
         if not is_admin:
             user_name = get_username_from_jwt(user_assertion)
             block['resv'] = list(filter(lambda x: x['createdBy'] == user_name, block['resv']))
@@ -836,6 +879,9 @@ async def get_block(
                         net['used'] += IPNetwork(subnet['prefix']).size
                         subnet['size'] = IPNetwork(subnet['prefix']).size
 
+        for ext in target_block['externals']:
+            target_block['used'] += IPNetwork(ext['cidr']).size
+
     if not is_admin:
         user_name = get_username_from_jwt(user_assertion)
         target_block['resv'] = list(filter(lambda x: x['createdBy'] == user_name, target_block['resv']))
@@ -896,11 +942,11 @@ async def update_block(
         raise HTTPException(status_code=400, detail="Invalid block name.")
 
     try:
-        patch = jsonpatch.JsonPatch(updates)
+        patch = jsonpatch.JsonPatch([x.model_dump() for x in updates])
     except jsonpatch.InvalidJsonPatch:
         raise HTTPException(status_code=500, detail="Invalid JSON patch, please review and try again.")
 
-    scrubbed_patch = jsonpatch.JsonPatch(await scrub_block_patch(patch, target_space, block))
+    scrubbed_patch = jsonpatch.JsonPatch(await scrub_block_patch(patch, space, block, tenant_id))
     scrubbed_patch.apply(update_block, in_place=True)
 
     await cosmos_replace(target_space, update_space)
@@ -1134,7 +1180,7 @@ async def create_block_net(
     resv_cidrs = list(x['cidr'] for x in target_block['resv'] if not x['settledOn'])
     block_net_cidrs += resv_cidrs
 
-    ext_cidrs = list(x['cidr'] for x in target_block['externala'])
+    ext_cidrs = list(x['cidr'] for x in target_block['externals'])
     block_net_cidrs += ext_cidrs
 
     for v in target_block['vnets']:
@@ -1474,7 +1520,7 @@ async def update_block_external_net(
     if not is_admin:
         raise HTTPException(status_code=403, detail="API restricted to admins.")
 
-    external_names = list(map(lambda x: x['name'], externals))
+    external_names = list(map(lambda x: x.name, externals))
     unique_ext_nets = len(set(external_names)) == len(external_names)
 
     if not unique_ext_nets:
@@ -1484,10 +1530,10 @@ async def update_block_external_net(
     invalid_descs = []
 
     for external in externals:
-        if not re.match(EXTERNAL_NAME_REGEX, external['name'], re.IGNORECASE):
+        if not re.match(EXTERNAL_NAME_REGEX, external.name, re.IGNORECASE):
             invalid_names.append(external['name'])
 
-        if not re.match(EXTERNAL_DESC_REGEX, external['desc'], re.IGNORECASE):
+        if not re.match(EXTERNAL_DESC_REGEX, external.desc, re.IGNORECASE):
             invalid_descs.append(external['desc'])
 
     if invalid_names:
@@ -1512,8 +1558,8 @@ async def update_block_external_net(
     external_nets_set = IPSet([])
 
     for external in externals:
-        if not (external_nets_set & IPSet([external['cidr']])):
-            external_nets_set.add(external['cidr'])
+        if not (external_nets_set & IPSet([external.cidr])):
+            external_nets_set.add(external.cidr)
         else:
             external_nets_overlap = True
 
@@ -1764,6 +1810,7 @@ async def create_block_reservation(
     Create a CIDR Reservation for the target Block with the following information:
 
     - **size**: Network mask bits
+    - **cidr**: Specific CIDR to reserve (alternative to 'size')
     - **desc**: Description (optional)
     - **reverse_search**:
         - **true**: New networks will be created as close to the <u>end</u> of the block as possible
@@ -1771,6 +1818,47 @@ async def create_block_reservation(
     - **smallest_cidr**:
         - **true**: New networks will be created using the smallest possible available block (e.g. it will not break up large CIDR blocks when possible)
         - **false (default)**: New networks will be created using the first available block, regardless of size
+
+    ### <u>Usage Examples</u>
+
+    #### *Request a new /24:*
+
+    ```json
+    {
+        "size": 24
+        "desc": "New CIDR for Business Unit 1"
+    }
+    ```
+
+    #### *Request a new /24, searching from the end of the CIDR range:*
+
+    ```json
+    {
+        "size": 24,
+        "desc": "New CIDR for Business Unit 1",
+        "reverse_search": true
+    }
+    ```
+
+    #### *Request a new /24, searching from the end of the CIDR range, using the smallest available CIDR block from the available address space:*
+
+    ```json
+    {
+        "size": 24,
+        "desc": "New CIDR for Business Unit 1",
+        "reverse_search": true,
+        "smallest_cidr": true
+    }
+    ```
+
+    #### *Request a specific /24:*
+
+    ```json
+    {
+        "cidr": "10.0.100.0/24",
+        "desc" "New CIDR for Business Unit 1"
+    }
+    ```
     """
 
     user_assertion = authorization.split(' ')[1]
@@ -1807,20 +1895,28 @@ async def create_block_reservation(
     reserved_set = IPSet(block_all_cidrs)
     available_set = block_set ^ reserved_set
 
-    available_slicer = slice(None, None, -1) if req.reverse_search else slice(None)
-    next_selector = -1 if req.reverse_search else 0
+    next_cidr = None
 
-    if req.smallest_cidr:
-        cidr_list = list(filter(lambda x: x.prefixlen <= req.size, available_set.iter_cidrs()[available_slicer]))
-        min_mask = max(map(lambda x: x.prefixlen, cidr_list))
-        available_block = next((net for net in list(filter(lambda network: network.prefixlen == min_mask, cidr_list))), None)
+    if req.cidr is not None:
+        if IPNetwork(req.cidr) not in available_set:
+            raise HTTPException(status_code=409, detail="Requested CIDR overlaps existing network(s).")
+
+        next_cidr = IPNetwork(req.cidr)
     else:
-        available_block = next((net for net in list(available_set.iter_cidrs())[available_slicer] if net.prefixlen <= req.size), None)
+        available_slicer = slice(None, None, -1) if req.reverse_search else slice(None)
+        next_selector = -1 if req.reverse_search else 0
 
-    if not available_block:
-        raise HTTPException(status_code=500, detail="Network of requested size unavailable in target block.")
+        if req.smallest_cidr:
+            cidr_list = list(filter(lambda x: x.prefixlen <= req.size, available_set.iter_cidrs()[available_slicer]))
+            min_mask = max(map(lambda x: x.prefixlen, cidr_list))
+            available_block = next((net for net in list(filter(lambda network: network.prefixlen == min_mask, cidr_list))), None)
+        else:
+            available_block = next((net for net in list(available_set.iter_cidrs())[available_slicer] if net.prefixlen <= req.size), None)
 
-    next_cidr = list(available_block.subnet(req.size))[next_selector]
+        if not available_block:
+            raise HTTPException(status_code=500, detail="Network of requested size unavailable in target block.")
+
+        next_cidr = list(available_block.subnet(req.size))[next_selector]
 
     if "preferred_username" in decoded:
         creator_id = decoded["preferred_username"]

@@ -1,15 +1,18 @@
-from fastapi import APIRouter, Depends, Request, Response, HTTPException, Header, Query, status
-from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.exceptions import HTTPException as StarletteHTTPException
 from fastapi.encoders import jsonable_encoder
 
-from pydantic import BaseModel, EmailStr, constr
-from typing import Optional, Union, List, Dict, Any
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Depends,
+    Header,
+    Query
+)
 
-import azure.cosmos.exceptions as exceptions
+from pydantic import BaseModel
+from typing import Union, List
 
 from app.dependencies import (
-    check_token_expired,
+    api_auth_checks,
     get_admin,
     get_tenant_id
 )
@@ -26,32 +29,18 @@ from app.routers.admin import (
 )
 
 from app.routers.common.helper import (
-    get_username_from_jwt,
     get_user_id_from_jwt,
     cosmos_query,
     cosmos_upsert,
     cosmos_replace,
-    cosmos_delete,
     cosmos_retry
 )
 
 router = APIRouter(
     prefix="/users",
     tags=["users"],
-    dependencies=[Depends(check_token_expired)]
+    dependencies=[Depends(api_auth_checks)]
 )
-
-# class ViewValue(BaseModel):
-#     """DOCSTRING"""
-
-#     flex: int
-#     visible: bool
-
-# class ViewPatch(BaseModel):
-#     """DOCSTRING"""
-
-#     values: List[Dict[str, ViewValue]]
-#     order: List[str]
 
 async def new_user(user_id, tenant_id):
     new_user = {
@@ -241,7 +230,7 @@ async def update_user(
     user_data = copy.deepcopy(user_query[0])
 
     try:
-        patch = jsonpatch.JsonPatch(updates)
+        patch = jsonpatch.JsonPatch([x.model_dump() for x in updates])
     except jsonpatch.InvalidJsonPatch:
         raise HTTPException(status_code=500, detail="Invalid JSON patch, please review and try again.")
 

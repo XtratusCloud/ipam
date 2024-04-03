@@ -1,18 +1,23 @@
-from fastapi import APIRouter, Depends, Request, Response, HTTPException, Header, Path, status
-from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import PlainTextResponse
 from fastapi.encoders import jsonable_encoder
 
-import azure.cosmos.exceptions as exceptions
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Response,
+    status,
+    Depends,
+    Header,
+    Path
+)
 
-from pydantic import BaseModel, EmailStr, constr
-from typing import Optional, List
+from typing import List
 
 import copy
 import uuid
 
 from app.dependencies import (
-    check_token_expired,
+    api_auth_checks,
     get_admin,
     get_tenant_id
 )
@@ -24,7 +29,6 @@ from app.routers.common.helper import (
     cosmos_query,
     cosmos_upsert,
     cosmos_replace,
-    cosmos_delete,
     cosmos_retry,
     arg_query
 )
@@ -32,7 +36,7 @@ from app.routers.common.helper import (
 router = APIRouter(
     prefix="/admin",
     tags=["admin"],
-    dependencies=[Depends(check_token_expired)]
+    dependencies=[Depends(api_auth_checks)]
 )
 
 async def new_admin_db(admin_list, exclusion_list, tenant_id):
