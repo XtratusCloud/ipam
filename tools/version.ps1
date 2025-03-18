@@ -74,7 +74,7 @@ try {
   # Read version from Engine version.json
   $engineVersionFile = Join-Path -Path $engineDir -ChildPath "version.json"
   $engineVersionContent = Get-Content -Path $engineVersionFile | ConvertFrom-Json
-  $engineVersion = $engineVersionContent.version 
+  $engineVersion = $engineVersionContent.app
 
   Write-Host "INFO: Reading version from Docs _coverpage.md file" -ForegroundColor Green
 
@@ -137,7 +137,7 @@ try {
   Write-Host "INFO: Updating version for Engine version.json file" -ForegroundColor Green
 
   # Update version for Engine version.json
-  $engineVersionContent.version = $updatedVersion
+  $engineVersionContent.app = $updatedVersion
   $engineVersionContent | ConvertTo-Json | Set-Content -Path $engineVersionFile
 
   Write-Host "INFO: Updating version for Docs coverpage.md file" -ForegroundColor Green
@@ -156,6 +156,12 @@ catch {
   $_ | Out-File -FilePath $versionLog -Append
   Write-Host "ERROR: Unable to update Azure IPAM component versions due to an exception, see log for detailed information!" -ForegroundColor red
   Write-Host "Version Log: $versionLog" -ForegroundColor Red
+
+  if ($env:CI) {
+    Write-Host $_.ToString()
+  }
+
+  exit 1
 }
 finally {
   Write-Host

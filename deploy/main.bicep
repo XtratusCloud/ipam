@@ -106,7 +106,6 @@ module cosmos './modules/cosmos.bicep' = {
     cosmosAccountName: resourceNames.cosmosAccountName
     cosmosContainerName: resourceNames.cosmosContainerName
     cosmosDatabaseName: resourceNames.cosmosDatabaseName
-    keyVaultName: keyVault.outputs.keyVaultName
     workspaceId: logAnalyticsWorkspace.outputs.workspaceId
     principalId: managedIdentity.outputs.principalId
   }
@@ -181,6 +180,7 @@ module functionApp './modules/functionApp.bicep' = if (deployAsFunc) {
 
 // Outputs
 output suffix string = uniqueString(guid)
+output subscriptionId string = subscription().subscriptionId
 output resourceGroupName string = resourceGroup.name
 output appServiceName string = deployAsFunc ? resourceNames.functionName : resourceNames.appServiceName
 output appServiceHostName string = deployAsFunc ? functionApp.outputs.functionAppHostName : appService.outputs.appServiceHostName
